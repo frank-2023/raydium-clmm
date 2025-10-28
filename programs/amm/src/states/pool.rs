@@ -13,6 +13,7 @@ use anchor_spl::token_interface::Mint;
 #[cfg(feature = "enable-log")]
 use std::convert::identity;
 use std::ops::{BitAnd, BitOr, BitXor};
+use serde::{Deserialize, Serialize};
 
 /// Seed to derive account address and signature
 pub const POOL_SEED: &str = "pool";
@@ -55,7 +56,7 @@ pub enum PoolStatusBitFlag {
 ///
 #[account(zero_copy(unsafe))]
 #[repr(C, packed)]
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 pub struct PoolState {
     /// Bump to identify PDA
     pub bump: [u8; 1],
@@ -625,7 +626,7 @@ pub enum RewardState {
 
 #[zero_copy(unsafe)]
 #[repr(C, packed)]
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RewardInfo {
     /// Reward state
     pub reward_state: u8,
