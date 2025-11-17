@@ -336,7 +336,6 @@ pub fn get_out_put_amount_and_remaining_accounts(
         tickarray_bitmap_extension,
         tick_arrays,
     )?;
-    println!("tick_array_start_index:{:?}", tick_array_start_index_vec);
 
     Ok((amount_calculated, tick_array_start_index_vec))
 }
@@ -389,8 +388,13 @@ fn swap_compute(
         tick: pool_state.tick_current,
         liquidity: pool_state.liquidity,
     };
-
-    let mut tick_array_current = tick_arrays.pop_front().unwrap();
+    let mut tick_array_current = match tick_arrays.pop_front() {
+        Some(x) => x,
+        None => {
+            return Err("No more tick arrays available");
+        }
+    };
+    //let mut tick_array_current = tick_arrays.pop_front().unwrap();
     if tick_array_current.start_tick_index != current_valid_tick_array_start_index {
         return Result::Err("tick array start tick index does not match");
     }
