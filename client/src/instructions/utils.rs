@@ -438,7 +438,12 @@ fn swap_compute(
                     zero_for_one,
                 )
                 .unwrap();
-            tick_array_current = tick_arrays.pop_front().unwrap();
+            let mut tick_array_current = match tick_arrays.pop_front() {
+                Some(x) => x,
+                None => {
+                    return Err("No more tick arrays available");
+                }
+            };
             if current_valid_tick_array_start_index.is_none() {
                 return Result::Err("tick array start tick index out of range limit");
             }
