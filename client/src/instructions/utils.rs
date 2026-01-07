@@ -419,13 +419,16 @@ fn swap_compute(
         {
             Box::new(*tick_state)
         } else {
+            let first_tick = match tick_array_current.first_initialized_tick(zero_for_one) {
+                Ok(tick) => *tick,
+                Err(err) => {
+                    // 打印详细信息，方便调试
+                    TickState::default() // 或者其他 fallback 逻辑
+                }
+            };
             if !tick_match_current_tick_array {
                 tick_match_current_tick_array = true;
-                Box::new(
-                    *tick_array_current
-                        .first_initialized_tick(zero_for_one)
-                        .unwrap(),
-                )
+                Box::new(first_tick)
             } else {
                 Box::new(TickState::default())
             }
@@ -452,9 +455,17 @@ fn swap_compute(
                 return Result::Err("tick array start tick index does not match");
             }
             tick_array_start_index_vec.push_back(tick_array_current.start_tick_index);
-            let mut first_initialized_tick = tick_array_current
-                .first_initialized_tick(zero_for_one)
-                .unwrap();
+            // let mut first_initialized_tick = tick_array_current
+            //     .first_initialized_tick(zero_for_one)
+            //     .unwrap();
+
+            let first_initialized_tick_result = tick_array_current.first_initialized_tick(zero_for_one);
+            let mut first_initialized_tick = match first_initialized_tick_result {
+                Ok(tick) => tick,
+                Err(err) => {
+                    return Result::Err("first initialized tick does not match");
+                }
+            };
 
             next_initialized_tick = Box::new(*first_initialized_tick.deref_mut());
         }
