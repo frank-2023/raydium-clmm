@@ -17,7 +17,9 @@ use anchor_lang::prelude::*;
 pub fn add_delta(x: u128, y: i128) -> Result<u128> {
     let z: u128;
     if y < 0 {
-        z = x - u128::try_from(-y).unwrap();
+        let delta = u128::try_from(-y).unwrap();
+        require!(x >= delta, ErrorCode::LiquiditySubValueErr);
+        z = x - delta;
         require_gt!(x, z, ErrorCode::LiquiditySubValueErr);
     } else {
         z = x + u128::try_from(y).unwrap();
