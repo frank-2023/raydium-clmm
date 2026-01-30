@@ -529,8 +529,14 @@ fn swap_compute(
                 if zero_for_one {
                     liquidity_net = liquidity_net.neg();
                 }
-                state.liquidity =
-                    liquidity_math::add_delta(state.liquidity, liquidity_net).unwrap();
+                match liquidity_math::add_delta(state.liquidity, liquidity_net) {
+                    Ok(new_liquidity) => state.liquidity = new_liquidity,
+                    Err(e) => {
+                        return Err("计算流动性失败");
+                    }
+                }
+                // state.liquidity =
+                //     liquidity_math::add_delta(state.liquidity, liquidity_net).unwrap();
             }
 
             state.tick = if zero_for_one {
