@@ -581,6 +581,252 @@ pub fn get_out_put_amount_and_remaining_accounts_simulate(
 
     Ok((pool_state_new,tick_arrays_new,amount_calculated, tick_array_start_index_vec))
 }
+
+pub fn get_out_put_amount_and_remaining_accounts_simulate2(
+    input_amount: u64,
+    sqrt_price_limit_x64: Option<u128>,
+    zero_for_one: bool,
+    is_base_input: bool,
+    pool_config: &AmmConfig,
+    pool_state: &PoolState,
+    tickarray_bitmap_extension: &TickArrayBitmapExtension,
+    tick_arrays: &mut VecDeque<TickArrayState>,
+) -> Result<(PoolState,u64, VecDeque<i32>), &'static str> {
+    let (is_pool_current_tick_array, current_valid_tick_array_start_index) = pool_state
+        .get_first_initialized_tick_array(&Some(*tickarray_bitmap_extension), zero_for_one)
+        .unwrap();
+
+    let (pool,amount_calculated, tick_array_start_index_vec) = swap_compute_simulate2(
+        zero_for_one,
+        is_base_input,
+        is_pool_current_tick_array,
+        pool_config.trade_fee_rate,
+        input_amount,
+        current_valid_tick_array_start_index,
+        sqrt_price_limit_x64.unwrap_or(0),
+        pool_state,
+        tickarray_bitmap_extension,
+        tick_arrays,
+    )?;
+
+    Ok((pool,amount_calculated, tick_array_start_index_vec))
+}
+fn swap_compute_simulate2(
+    zero_for_one: bool,
+    is_base_input: bool,
+    is_pool_current_tick_array: bool,
+    fee: u32,
+    amount_specified: u64,
+    current_valid_tick_array_start_index: i32,
+    sqrt_price_limit_x64: u128,
+    pool_state: &PoolState,
+    tickarray_bitmap_extension: &TickArrayBitmapExtension,
+    tick_arrays: &mut VecDeque<TickArrayState>,
+) -> Result<(PoolState,u64, VecDeque<i32>), &'static str> {
+    let mut pool_sim = pool_state.clone();
+    if amount_specified == 0 {
+        return Result::Err("amountSpecified must not be 0");
+    }
+    let sqrt_price_limit_x64 = if sqrt_price_limit_x64 == 0 {
+        if zero_for_one {
+            tick_math::MIN_SQRT_PRICE_X64 + 1
+        } else {
+            tick_math::MAX_SQRT_PRICE_X64 - 1
+        }
+    } else {
+        sqrt_price_limit_x64
+    };
+    if zero_for_one {
+        if sqrt_price_limit_x64 < tick_math::MIN_SQRT_PRICE_X64 {
+            return Result::Err("sqrt_price_limit_x64 must greater than MIN_SQRT_PRICE_X64");
+        }
+        if sqrt_price_limit_x64 >= pool_state.sqrt_price_x64 {
+            return Result::Err("sqrt_price_limit_x64 must smaller than current");
+        }
+    } else {
+        if sqrt_price_limit_x64 > tick_math::MAX_SQRT_PRICE_X64 {
+            return Result::Err("sqrt_price_limit_x64 must smaller than MAX_SQRT_PRICE_X64");
+        }
+        if sqrt_price_limit_x64 <= pool_state.sqrt_price_x64 {
+            return Result::Err("sqrt_price_limit_x64 must greater than current");
+        }
+    }
+    let mut tick_match_current_tick_array = is_pool_current_tick_array;
+
+    let mut state = SwapState {
+        amount_specified_remaining: amount_specified,
+        amount_calculated: 0,
+        sqrt_price_x64: pool_state.sqrt_price_x64,
+        tick: pool_state.tick_current,
+        liquidity: pool_state.liquidity,
+    };
+    let mut tick_array_current = match tick_arrays.pop_front() {
+        Some(x) => x,
+        None => {
+            return Err("No more tick arrays available");
+        }
+    };
+    //let mut tick_array_current = tick_arrays.pop_front().unwrap();
+    if tick_array_current.start_tick_index != current_valid_tick_array_start_index {
+        return Result::Err("tick array start tick index does not match");
+    }
+    let mut tick_array_start_index_vec = VecDeque::new();
+    tick_array_start_index_vec.push_back(tick_array_current.start_tick_index);
+    let mut loop_count = 0;
+    // loop across ticks until input liquidity is consumed, or the limit price is reached
+    while state.amount_specified_remaining != 0
+        && state.sqrt_price_x64 != sqrt_price_limit_x64
+        && state.tick < tick_math::MAX_TICK
+        && state.tick > tick_math::MIN_TICK
+    {
+        if loop_count > 10 {
+            return Result::Err("loop_count limit");
+        }
+        let mut step = StepComputations::default();
+        step.sqrt_price_start_x64 = state.sqrt_price_x64;
+        // save the bitmap, and the tick account if it is initialized
+        let mut next_initialized_tick = if let Some(tick_state) = tick_array_current
+            .next_initialized_tick(state.tick, pool_state.tick_spacing, zero_for_one)
+            .unwrap()
+        {
+            Box::new(*tick_state)
+        } else {
+            let first_tick = match tick_array_current.first_initialized_tick(zero_for_one) {
+                Ok(tick) => *tick,
+                Err(err) => {
+                    // 打印详细信息，方便调试
+                    TickState::default() // 或者其他 fallback 逻辑
+                }
+            };
+            if !tick_match_current_tick_array {
+                tick_match_current_tick_array = true;
+                Box::new(first_tick)
+            } else {
+                Box::new(TickState::default())
+            }
+        };
+        if !next_initialized_tick.is_initialized() {
+            let current_valid_tick_array_start_index = pool_state
+                .next_initialized_tick_array_start_index(
+                    &Some(*tickarray_bitmap_extension),
+                    current_valid_tick_array_start_index,
+                    zero_for_one,
+                )
+                .unwrap();
+            let mut tick_array_current = match tick_arrays.pop_front() {
+                Some(x) => x,
+                None => {
+                    return Err("No more tick arrays available");
+                }
+            };
+            if current_valid_tick_array_start_index.is_none() {
+                return Result::Err("tick array start tick index out of range limit");
+            }
+            if tick_array_current.start_tick_index != current_valid_tick_array_start_index.unwrap()
+            {
+                return Result::Err("tick array start tick index does not match");
+            }
+            tick_array_start_index_vec.push_back(tick_array_current.start_tick_index);
+            // let mut first_initialized_tick = tick_array_current
+            //     .first_initialized_tick(zero_for_one)
+            //     .unwrap();
+
+            let first_initialized_tick_result = tick_array_current.first_initialized_tick(zero_for_one);
+            let mut first_initialized_tick = match first_initialized_tick_result {
+                Ok(tick) => tick,
+                Err(err) => {
+                    return Result::Err("first initialized tick does not match");
+                }
+            };
+
+            next_initialized_tick = Box::new(*first_initialized_tick.deref_mut());
+        }
+        step.tick_next = next_initialized_tick.tick;
+        step.initialized = next_initialized_tick.is_initialized();
+        if step.tick_next < MIN_TICK {
+            step.tick_next = MIN_TICK;
+        } else if step.tick_next > MAX_TICK {
+            step.tick_next = MAX_TICK;
+        }
+
+        step.sqrt_price_next_x64 = tick_math::get_sqrt_price_at_tick(step.tick_next).unwrap();
+
+        let target_price = if (zero_for_one && step.sqrt_price_next_x64 < sqrt_price_limit_x64)
+            || (!zero_for_one && step.sqrt_price_next_x64 > sqrt_price_limit_x64)
+        {
+            sqrt_price_limit_x64
+        } else {
+            step.sqrt_price_next_x64
+        };
+        let swap_step = swap_math::compute_swap_step(
+            state.sqrt_price_x64,
+            target_price,
+            state.liquidity,
+            state.amount_specified_remaining,
+            fee,
+            is_base_input,
+            zero_for_one,
+            1,
+        )
+            .unwrap();
+        state.sqrt_price_x64 = swap_step.sqrt_price_next_x64;
+        step.amount_in = swap_step.amount_in;
+        step.amount_out = swap_step.amount_out;
+        step.fee_amount = swap_step.fee_amount;
+
+        if is_base_input {
+            state.amount_specified_remaining = state
+                .amount_specified_remaining
+                .checked_sub(step.amount_in + step.fee_amount)
+                .unwrap();
+            state.amount_calculated = state
+                .amount_calculated
+                .checked_add(step.amount_out)
+                .unwrap();
+        } else {
+            state.amount_specified_remaining = state
+                .amount_specified_remaining
+                .checked_sub(step.amount_out)
+                .unwrap();
+            state.amount_calculated = state
+                .amount_calculated
+                .checked_add(step.amount_in + step.fee_amount)
+                .unwrap();
+        }
+
+        if state.sqrt_price_x64 == step.sqrt_price_next_x64 {
+            // if the tick is initialized, run the tick transition
+            if step.initialized {
+                let mut liquidity_net = next_initialized_tick.liquidity_net;
+                if zero_for_one {
+                    liquidity_net = liquidity_net.neg();
+                }
+                match liquidity_math::add_delta(state.liquidity, liquidity_net) {
+                    Ok(new_liquidity) => state.liquidity = new_liquidity,
+                    Err(e) => {
+                        return Err("计算流动性失败");
+                    }
+                }
+                // state.liquidity =
+                //     liquidity_math::add_delta(state.liquidity, liquidity_net).unwrap();
+            }
+
+            state.tick = if zero_for_one {
+                step.tick_next - 1
+            } else {
+                step.tick_next
+            };
+        } else if state.sqrt_price_x64 != step.sqrt_price_start_x64 {
+            // recompute unless we're on a lower tick boundary (i.e. already transitioned ticks), and haven't moved
+            state.tick = tick_math::get_tick_at_sqrt_price(state.sqrt_price_x64).unwrap();
+        }
+        loop_count += 1;
+    }
+    pool_sim.sqrt_price_x64 = state.sqrt_price_x64;
+    pool_sim.tick_current = state.tick;
+    pool_sim.liquidity = state.liquidity;
+    Ok((pool_sim,state.amount_calculated, tick_array_start_index_vec))
+}
 pub fn swap_compute_simulate(
     pool: &PoolState,
     tick_arrays: &mut VecDeque<TickArrayState>,
@@ -759,16 +1005,19 @@ async fn test_orca_raydium_value() {
     let tickarray_bitmap_extension_info = client.get_account(&Pubkey::from_str("HhxMwQsF7wFBPLYRzVJbiet5ctaMPC2wh9fJfuD2ZPhu").unwrap()).unwrap();
     let tickarray_bitmap_extension = TickArrayBitmapExtension::try_deserialize(& mut tickarray_bitmap_extension_info.data()).unwrap();
     let tick_arrays: &mut VecDeque<TickArrayState> = &mut Default::default();
+    let tick_arrays2: &mut VecDeque<TickArrayState> = &mut Default::default();
     let tick_array1 = client.get_account(&Pubkey::from_str("33nQhC5eLZLf9hz1iffnGKTw6Wtvcnu34ah6UhAirSPe").unwrap()).unwrap();
     let t1 = TickArrayState::try_deserialize(& mut tick_array1.data()).unwrap();
     let tick_array2 = client.get_account(&Pubkey::from_str("3Gxw6M37CqRjig31iPcUgZH1hgwBrJU3WbCEb1Npfkjc").unwrap()).unwrap();
     let t2 = TickArrayState::try_deserialize(& mut tick_array2.data()).unwrap();
-    tick_arrays.push_back(t1);
     tick_arrays.push_back(t2);
-    let v = get_out_put_amount_and_remaining_accounts_simulate(input_amount, Some(sqrt_price_limit_x64), zero_for_one, is_base_input, &pool_config, &pool_state, &tickarray_bitmap_extension, tick_arrays);
-    println!("v: {:#?}", v.clone().unwrap().2);
-    let v2 = get_out_put_amount_and_remaining_accounts_simulate(34739802885, Some(sqrt_price_limit_x64), false, true, &pool_config, &v.clone().unwrap().0, &tickarray_bitmap_extension, &mut v.unwrap().1);
+    tick_arrays.push_back(t1);
+    tick_arrays2.push_back(t1);
+    tick_arrays2.push_back(t2);
+    let v = get_out_put_amount_and_remaining_accounts_simulate2(input_amount, Some(sqrt_price_limit_x64), zero_for_one, is_base_input, &pool_config, &pool_state, &tickarray_bitmap_extension, tick_arrays);
+    println!("v: {:#?}", v.clone().unwrap().1);
+    let v2 = get_out_put_amount_and_remaining_accounts_simulate2(34739802885, Some(sqrt_price_limit_x64), false, true, &pool_config, &v.clone().unwrap().0, &tickarray_bitmap_extension, tick_arrays2);
 
-    println!("v2: {:#?}", v2.unwrap().2);
+    println!("v2: {:#?}", v2.unwrap().1);
 }
 
