@@ -555,32 +555,6 @@ fn swap_compute(
 }
 
 
-pub fn get_out_put_amount_and_remaining_accounts_simulate(
-    input_amount: u64,
-    sqrt_price_limit_x64: Option<u128>,
-    zero_for_one: bool,
-    is_base_input: bool,
-    pool_config: &AmmConfig,
-    pool_state: &PoolState,
-    tickarray_bitmap_extension: &TickArrayBitmapExtension,
-    tick_arrays: &mut VecDeque<TickArrayState>,
-) -> Result<(PoolState, VecDeque<TickArrayState>,u64, VecDeque<i32>), &'static str> {
-    // let (is_pool_current_tick_array, current_valid_tick_array_start_index) = pool_state
-    //     .get_first_initialized_tick_array(&Some(*tickarray_bitmap_extension), zero_for_one)
-    //     .unwrap();
-
-    let (pool_state_new,tick_arrays_new,amount_calculated, tick_array_start_index_vec) = swap_compute_simulate(
-        pool_state,
-        tick_arrays,
-        input_amount,
-        sqrt_price_limit_x64.unwrap_or(0),
-        zero_for_one,
-        is_base_input,
-        pool_config.trade_fee_rate
-    )?;
-
-    Ok((pool_state_new,tick_arrays_new,amount_calculated, tick_array_start_index_vec))
-}
 
 pub fn get_out_put_amount_and_remaining_accounts_simulate2(
     input_amount: u64,
@@ -611,6 +585,7 @@ pub fn get_out_put_amount_and_remaining_accounts_simulate2(
 
     Ok((pool,amount_calculated, tick_array_start_index_vec))
 }
+
 fn swap_compute_simulate2(
     zero_for_one: bool,
     is_base_input: bool,
@@ -757,8 +732,8 @@ fn swap_compute_simulate2(
             sqrt_price_limit_x64
         } else {
             step.sqrt_price_next_x64
-        };
-        let swap_step = swap_math::compute_swap_step(
+        }; 
+        let swap_step_value = swap_math::compute_swap_step(
             state.sqrt_price_x64,
             target_price,
             state.liquidity,
@@ -767,60 +742,68 @@ fn swap_compute_simulate2(
             is_base_input,
             zero_for_one,
             1,
-        )
-            .unwrap();
-        state.sqrt_price_x64 = swap_step.sqrt_price_next_x64;
-        step.amount_in = swap_step.amount_in;
-        step.amount_out = swap_step.amount_out;
-        step.fee_amount = swap_step.fee_amount;
+        );
+        match swap_step_value {
+            Ok(swap_step) => {
+                state.sqrt_price_x64 = swap_step.sqrt_price_next_x64;
+                        step.amount_in = swap_step.amount_in;
+                        step.amount_out = swap_step.amount_out;
+                        step.fee_amount = swap_step.fee_amount;
 
-        if is_base_input {
-            state.amount_specified_remaining = state
-                .amount_specified_remaining
-                .checked_sub(step.amount_in + step.fee_amount)
-                .unwrap();
-            state.amount_calculated = state
-                .amount_calculated
-                .checked_add(step.amount_out)
-                .unwrap();
-        } else {
-            state.amount_specified_remaining = state
-                .amount_specified_remaining
-                .checked_sub(step.amount_out)
-                .unwrap();
-            state.amount_calculated = state
-                .amount_calculated
-                .checked_add(step.amount_in + step.fee_amount)
-                .unwrap();
-        }
+                        if is_base_input {
+                            state.amount_specified_remaining = state
+                                .amount_specified_remaining
+                                .checked_sub(step.amount_in + step.fee_amount)
+                                .unwrap();
+                            state.amount_calculated = state
+                                .amount_calculated
+                                .checked_add(step.amount_out)
+                                .unwrap();
+                        } else {
+                            state.amount_specified_remaining = state
+                                .amount_specified_remaining
+                                .checked_sub(step.amount_out)
+                                .unwrap();
+                            state.amount_calculated = state
+                                .amount_calculated
+                                .checked_add(step.amount_in + step.fee_amount)
+                                .unwrap();
+                        }
 
-        if state.sqrt_price_x64 == step.sqrt_price_next_x64 {
-            // if the tick is initialized, run the tick transition
-            if step.initialized {
-                let mut liquidity_net = next_initialized_tick.liquidity_net;
-                if zero_for_one {
-                    liquidity_net = liquidity_net.neg();
-                }
-                match liquidity_math::add_delta(state.liquidity, liquidity_net) {
-                    Ok(new_liquidity) => state.liquidity = new_liquidity,
-                    Err(e) => {
-                        return Err("计算流动性失败");
-                    }
-                }
-                // state.liquidity =
-                //     liquidity_math::add_delta(state.liquidity, liquidity_net).unwrap();
+                        if state.sqrt_price_x64 == step.sqrt_price_next_x64 {
+                            // if the tick is initialized, run the tick transition
+                            if step.initialized {
+                                let mut liquidity_net = next_initialized_tick.liquidity_net;
+                                if zero_for_one {
+                                    liquidity_net = liquidity_net.neg();
+                                }
+                                match liquidity_math::add_delta(state.liquidity, liquidity_net) {
+                                    Ok(new_liquidity) => state.liquidity = new_liquidity,
+                                    Err(e) => {
+                                        return Err("计算流动性失败");
+                                    }
+                                }
+                                // state.liquidity =
+                                //     liquidity_math::add_delta(state.liquidity, liquidity_net).unwrap();
+                            }
+
+                            state.tick = if zero_for_one {
+                                step.tick_next - 1
+                            } else {
+                                step.tick_next
+                            };
+                        } else if state.sqrt_price_x64 != step.sqrt_price_start_x64 {
+                            // recompute unless we're on a lower tick boundary (i.e. already transitioned ticks), and haven't moved
+                            state.tick = tick_math::get_tick_at_sqrt_price(state.sqrt_price_x64).unwrap();
+                        }
+                        loop_count += 1;
+            },
+            Err(e) => {
+                println!("compute_swap_step error: {:?}", e);
+                panic!();
             }
-
-            state.tick = if zero_for_one {
-                step.tick_next - 1
-            } else {
-                step.tick_next
-            };
-        } else if state.sqrt_price_x64 != step.sqrt_price_start_x64 {
-            // recompute unless we're on a lower tick boundary (i.e. already transitioned ticks), and haven't moved
-            state.tick = tick_math::get_tick_at_sqrt_price(state.sqrt_price_x64).unwrap();
-        }
-        loop_count += 1;
+        };
+        
     }
     pool_sim.sqrt_price_x64 = state.sqrt_price_x64;
     pool_sim.tick_current = state.tick;
