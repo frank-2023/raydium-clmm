@@ -799,8 +799,7 @@ fn swap_compute_simulate2(
                         loop_count += 1;
             },
             Err(e) => {
-                println!("compute_swap_step error: {:?}", e);
-                panic!();
+                return Err("amount_specified must not be 0");
             }
         };
         
