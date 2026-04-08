@@ -486,7 +486,7 @@ fn swap_compute(
         } else {
             step.sqrt_price_next_x64
         };
-        let swap_step = swap_math::compute_swap_step(
+        let swap_step_value = swap_math::compute_swap_step(
             state.sqrt_price_x64,
             target_price,
             state.liquidity,
@@ -495,9 +495,11 @@ fn swap_compute(
             is_base_input,
             zero_for_one,
             1,
-        )
-        .unwrap();
-        state.sqrt_price_x64 = swap_step.sqrt_price_next_x64;
+        );
+
+        match swap_step_value {
+            Ok(swap_step) => {
+state.sqrt_price_x64 = swap_step.sqrt_price_next_x64;
         step.amount_in = swap_step.amount_in;
         step.amount_out = swap_step.amount_out;
         step.fee_amount = swap_step.fee_amount;
@@ -549,6 +551,11 @@ fn swap_compute(
             state.tick = tick_math::get_tick_at_sqrt_price(state.sqrt_price_x64).unwrap();
         }
         loop_count += 1;
+            }
+            Err(e) => {
+                return Err("amount_specified must not be 0");
+            }
+        }
     }
 
     Ok((state.amount_calculated, tick_array_start_index_vec))
