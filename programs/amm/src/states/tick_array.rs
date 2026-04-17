@@ -1,3 +1,4 @@
+use serde_big_array::BigArray;
 use super::pool::PoolState;
 use crate::error::ErrorCode;
 use crate::libraries::{liquidity_math, tick_math};
@@ -7,6 +8,7 @@ use crate::Result;
 use anchor_lang::{prelude::*, system_program};
 #[cfg(feature = "enable-log")]
 use std::convert::identity;
+use serde::{Deserialize, Serialize};
 
 pub const TICK_ARRAY_SEED: &str = "tick_array";
 pub const TICK_ARRAY_SIZE_USIZE: usize = 60;
@@ -15,14 +17,17 @@ pub const TICK_ARRAY_SIZE: i32 = 60;
 // pub const MAX_TICK_ARRAY_START_INDEX: i32 = 306600;
 #[account(zero_copy(unsafe))]
 #[repr(C, packed)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TickArrayState {
     pub pool_id: Pubkey,
     pub start_tick_index: i32,
+    #[serde(with = "BigArray")]
     pub ticks: [TickState; TICK_ARRAY_SIZE_USIZE],
     pub initialized_tick_count: u8,
     // account update recent epoch
     pub recent_epoch: u64,
     // Unused bytes for future upgrades.
+    #[serde(with = "BigArray")]
     pub padding: [u8; 107],
 }
 
@@ -266,7 +271,7 @@ impl Default for TickArrayState {
 
 #[zero_copy(unsafe)]
 #[repr(C, packed)]
-#[derive(Default, Debug)]
+#[derive(Default, Debug,Serialize, Deserialize)]
 pub struct TickState {
     pub tick: i32,
     /// Amount of net liquidity added (subtracted) when tick is crossed from left to right (right to left)

@@ -1,5 +1,6 @@
 use crate::error::ErrorCode;
 use anchor_lang::prelude::*;
+use serde::{Deserialize, Serialize};
 
 pub const AMM_CONFIG_SEED: &str = "amm_config";
 
@@ -7,7 +8,7 @@ pub const FEE_RATE_DENOMINATOR_VALUE: u32 = 1_000_000;
 
 /// Holds the current owner of the factory
 #[account]
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 pub struct AmmConfig {
     /// Bump to identify PDA
     pub bump: u8,

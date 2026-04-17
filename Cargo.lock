@@ -3810,6 +3810,7 @@ dependencies = [
  "quickcheck",
  "rand 0.8.5",
  "serde",
+ "serde-big-array",
  "solana-security-txt",
  "spl-token-2022 7.0.0",
  "uint",

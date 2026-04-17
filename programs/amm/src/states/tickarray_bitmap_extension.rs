@@ -10,12 +10,13 @@ use crate::libraries::{
 use crate::states::{TickArrayState, POOL_TICK_ARRAY_BITMAP_SEED};
 use anchor_lang::prelude::*;
 use std::ops::BitXor;
+use serde::{Deserialize, Serialize};
 
 const EXTENSION_TICKARRAY_BITMAP_SIZE: usize = 14;
 
 #[account(zero_copy(unsafe))]
 #[repr(C, packed)]
-#[derive(Debug)]
+#[derive(Debug,Serialize, Deserialize)]
 pub struct TickArrayBitmapExtension {
     pub pool_id: Pubkey,
     /// Packed initialized tick array state for start_tick_index is positive
